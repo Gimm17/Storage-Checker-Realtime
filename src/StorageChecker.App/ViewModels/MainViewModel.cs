@@ -1,5 +1,10 @@
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Windows;
+using System.Windows.Data;
+using System.Windows.Media;
+using Brush = System.Windows.Media.Brush;
+using Brushes = System.Windows.Media.Brushes;
 using System.Windows.Threading;
 using Application = System.Windows.Application;
 using MessageBox = System.Windows.MessageBox;
@@ -29,15 +34,30 @@ public sealed partial class MainViewModel : ObservableObject
     private const int MaxRows = 2000;
 
     public ObservableCollection<FileEventViewModel> Events { get; } = new();
+    public ICollectionView EventsView { get; }
+    public List<string> SortOptions { get; } = new()
+    {
+        "Waktu ↓",
+        "Ukuran ↑",
+        "Ukuran ↓",
+        "Kategori",
+        "Drive"
+    };
 
     public HistoryViewModel History { get; }
+    public DashboardViewModel Dashboard { get; }
 
     [ObservableProperty] private string _statusText = "Memulai...";
-    [ObservableProperty] private long _totalDeltaToday;
+    [ObservableProperty] private long _totalAddedToday;
+    [ObservableProperty] private long _totalDeletedToday;
     [ObservableProperty] private FileEventViewModel? _selected;
     [ObservableProperty] private bool _autoStartEnabled;
+    [ObservableProperty] private string _selectedSort = "Waktu ↓";
 
-    public string TotalDeltaText => FileEventViewModel.HumanSize(TotalDeltaToday);
+    public string TotalAddedText => FileEventViewModel.HumanSize(TotalAddedToday);
+    public string TotalDeletedText => FileEventViewModel.HumanSize(TotalDeletedToday);
+    public string NetDeltaText => FileEventViewModel.HumanSize(TotalAddedToday - TotalDeletedToday);
+    public Brush NetDeltaBrush => (TotalAddedToday - TotalDeletedToday) >= 0 ? Brushes.DarkRed : Brushes.DarkGreen;
 
     public MainViewModel(MonitorService monitor, FileOperations fileOps, EventDatabase db)
     {
@@ -45,12 +65,44 @@ public sealed partial class MainViewModel : ObservableObject
         _fileOps = fileOps;
         _dispatcher = Application.Current.Dispatcher;
         History = new HistoryViewModel(db);
+        Dashboard = new DashboardViewModel(db);
+
+        EventsView = CollectionViewSource.GetDefaultView(Events);
+        EventsView.SortDescriptions.Add(new SortDescription("Time", ListSortDirection.Descending));
+        if (EventsView is ListCollectionView liveView)
+        {
+            liveView.IsLiveSorting = true;
+            liveView.LiveSortingProperties.Add("Time");
+            liveView.LiveSortingProperties.Add("Model.DeltaBytes");
+            liveView.LiveSortingProperties.Add("CategoryText");
+            liveView.LiveSortingProperties.Add("Drive");
+        }
 
         // Inisialisasi state checkbox dari kondisi Task Scheduler saat ini.
         _suppressAutoStartChange = true;
         try { AutoStartEnabled = _autoStart.IsEnabled(); } catch { }
         _suppressAutoStartChange = false;
     }
+
+    partial void OnSelectedSortChanged(string value) => ApplySort(value);
+
+    private void ApplySort(string sort)
+    {
+        EventsView.SortDescriptions.Clear();
+        var (prop, dir) = sort switch
+        {
+            "Ukuran ↑" => ("Model.DeltaBytes", ListSortDirection.Ascending),
+            "Ukuran ↓" => ("Model.DeltaBytes", ListSortDirection.Descending),
+            "Kategori" => ("CategoryText", ListSortDirection.Ascending),
+            "Drive" => ("Drive", ListSortDirection.Ascending),
+            _ => ("Time", ListSortDirection.Descending)
+        };
+        EventsView.SortDescriptions.Add(new SortDescription(prop, dir));
+        EventsView.Refresh();
+    }
+
+    partial void OnTotalAddedTodayChanged(long value) => OnPropertyChanged(nameof(NetDeltaText));
+    partial void OnTotalDeletedTodayChanged(long value) => OnPropertyChanged(nameof(NetDeltaText));
 
     partial void OnAutoStartEnabledChanged(bool value)
     {
@@ -93,8 +145,14 @@ public sealed partial class MainViewModel : ObservableObject
     private void AddEvent(FileEventViewModel vm)
     {
         Events.Insert(0, vm);
-        TotalDeltaToday += vm.Model.DeltaBytes;
-        OnPropertyChanged(nameof(TotalDeltaText));
+
+        if (vm.Model.EventType == FileEventType.Deleted)
+            TotalDeletedToday += Math.Abs(vm.Model.DeltaBytes);
+        else
+            TotalAddedToday += vm.Model.DeltaBytes;
+
+        OnPropertyChanged(nameof(TotalAddedText));
+        OnPropertyChanged(nameof(TotalDeletedText));
 
         // Batasi jumlah baris UI agar memori stabil (semua tetap ada di DB).
         while (Events.Count > MaxRows)

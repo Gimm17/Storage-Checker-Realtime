@@ -28,6 +28,9 @@ Storage penuh tanpa sebab yang jelas adalah masalah klasik. Cache browser memben
 |---|-------|-----------|
 | ⚡ | **Monitoring Realtime** | Memantau disk **C, D, E** lewat NTFS USN Journal — sangat ringan & tidak melewatkan satu perubahan pun |
 | 🏷️ | **Kategorisasi Cerdas** | Otomatis mengelompokkan: cache browser, dependencies dev, Windows Update, installer, log, media, game, OneDrive, dll |
+| 📊 | **Statistik Visual** | Tab Dashboard baru dengan chart **ScottPlot**: tambah vs hapus per hari, net trend, breakdown kategori (hari / 7 hari / 30 hari / 1 tahun) |
+| 📈 | **Net Change** | Hitung **total tambah**, **total hapus**, dan **net change** per sesi/periode — storage sebenarnya lebih akurat |
+| 🔃 | **Sortir Ukuran** | Urutkan event realtime berdasarkan waktu, ukuran (naik/turun), kategori, atau drive |
 | 🚦 | **Penanda Keamanan** | Setiap file ditandai **Aman / Hati-hati / Berbahaya** sebelum dihapus — file sistem terlindungi |
 | 🗑️ | **Hapus Aman** | Tombol Delete (ke Recycle Bin, bisa di-undo) dengan konfirmasi ganda untuk file berbahaya |
 | 📂 | **Open in Explorer** | Langsung buka lokasi file dengan satu klik |
@@ -42,15 +45,17 @@ Storage penuh tanpa sebab yang jelas adalah masalah klasik. Cache browser memben
 > 💡 *Tambahkan screenshot aplikasi di sini setelah dijalankan — letakkan gambar di folder `docs/` lalu sematkan dengan `![Dashboard](docs/dashboard.png)`.*
 
 ```
-┌─ Storage Checker Realtime ───────────────────────────────────────┐
-│ Status: Memantau C:, D:, E:     Total pertambahan sesi: 2.4 GB    │
-│ [Open in Explorer] [Delete]  ☑ Jalankan saat Windows menyala      │
-├──────────────────────────────────────────────────────────────────┤
-│ Waktu    │Drive│ Nama File      │Δ Tambah│Kategori     │Keamanan   │
-│ 14:02:11 │ C:  │ chunk-abc.js   │ 320 MB │Dependencies │Hati-hati  │
-│ 14:01:50 │ C:  │ f_004512       │  88 MB │Cache Browser│Aman       │
-│ 14:00:03 │ C:  │ update.cab     │ 1.2 GB │Windows Update│BERBAHAYA │
-└──────────────────────────────────────────────────────────────────┘
+┌─ Storage Checker Realtime ───────────────────────────────────────────────┐
+│  Tab: Realtime                        Tab: Dashboard                      │
+│  [Total Tambah: 2.4 GB]  [Total Hapus: 1.1 GB]  [Net Change: +1.3 GB]    │
+│  [Open in Explorer] [Delete]  ☑ Jalankan saat Windows menyala  [Sort ▼]  │
+├──────────────────────────────────────────────────────────────────────────┤
+│ Waktu    │Drive│ Nama File      │Δ Perubahan│Kategori     │Keamanan     │
+│ 14:02:11 │ C:  │ chunk-abc.js   │  +320 MB  │Dependencies │Hati-hati    │
+│ 14:01:50 │ C:  │ f_004512       │  +88 MB   │Cache Browser│Aman         │
+│ 14:00:03 │ C:  │ update.cab     │  +1.2 GB  │Windows Update│BERBAHAYA   │
+│ 13:58:20 │ C:  │ temp-abc.tmp   │  -45 MB   │Sementara    │Aman         │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -118,9 +123,9 @@ USN Journal (C/D/E) → Parse → Resolve Path → Kategorisasi → Cek Keamanan
 |--------|-------|
 | `StorageChecker.Core` | Logika inti: USN reader, kategorisasi, keamanan, SQLite, agregasi (tanpa UI) |
 | `StorageChecker.App` | Aplikasi WPF: dashboard, system tray, file operations, auto-start |
-| `StorageChecker.Tests` | Unit test (xUnit) — 33 test mencakup kategorisasi, keamanan, database, agregasi |
+| `StorageChecker.Tests` | Unit test (xUnit) — 37 test mencakup kategorisasi, keamanan, database, agregasi, event_type |
 
-**Stack:** C# • .NET 8 • WPF • MVVM (CommunityToolkit) • SQLite • P/Invoke (kernel32)
+**Stack:** C# • .NET 8 • WPF • MVVM (CommunityToolkit) • SQLite • ScottPlot.WPF • P/Invoke (kernel32)
 
 ---
 

@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+    <PackageReference Include="ScottPlot.WPF" Version="5.0.54" />
     <PackageReference Include="TaskScheduler" Version="2.12.2" />
   </ItemGroup>
 

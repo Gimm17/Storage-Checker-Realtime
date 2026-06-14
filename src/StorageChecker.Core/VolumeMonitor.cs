@@ -21,6 +21,12 @@ public sealed class VolumeMonitor : IDisposable
     private UsnJournalReader? _reader;
     private Task? _loop;
 
+    // Cache ukuran file terakhir yang diketahui, dipakai untuk estimasi
+    // ukuran file saat terhapus (USN delete tidak membawa ukuran).
+    private readonly Dictionary<string, long> _lastKnownSizes = new();
+    private readonly object _sizeCacheLock = new();
+    private const int MaxSizeCacheEntries = 50_000;
+
     private const int MinDelayMs = 1000;
     private const int MaxDelayMs = 3000;
 
@@ -102,15 +108,41 @@ public sealed class VolumeMonitor : IDisposable
         foreach (var rec in records)
         {
             if (rec.IsDirectory) continue;
-            // Fokus pada pertambahan data / file baru / penutupan tulis.
-            if (!rec.IsDataExtend && !rec.IsCreate && !rec.IsClose) continue;
 
             var path = _reader!.ResolvePath(rec);
             if (path is null) continue;
 
-            long size = TryGetFileSize(path);
             var category = _categorizer.Categorize(path);
             var safety = _safety.Classify(path, rec.IsSystem, category);
+
+            if (rec.IsDelete)
+            {
+                // File dihapus: ukuran diambil dari cache terakhir yang diketahui.
+                var lastSize = GetCachedSize(path);
+                RemoveCachedSize(path);
+
+                events.Add(new FileEvent
+                {
+                    TimestampUtc = rec.TimestampUtc,
+                    Drive = _drive,
+                    FullPath = path,
+                    FileName = rec.FileName,
+                    SizeBytes = lastSize,
+                    DeltaBytes = -lastSize,
+                    Category = category,
+                    Safety = safety,
+                    Reason = rec.Reason,
+                    IsDeleted = true,
+                    EventType = FileEventType.Deleted
+                });
+                continue;
+            }
+
+            // Fokus pada pertambahan data / file baru / penutupan tulis.
+            if (!rec.IsDataExtend && !rec.IsCreate && !rec.IsClose) continue;
+
+            long size = TryGetFileSize(path);
+            SetCachedSize(path, size);
 
             events.Add(new FileEvent
             {
@@ -119,10 +151,11 @@ public sealed class VolumeMonitor : IDisposable
                 FullPath = path,
                 FileName = rec.FileName,
                 SizeBytes = size,
-                DeltaBytes = size, // perkiraan kasar; refinasi di Fase berikut bila perlu
+                DeltaBytes = size,
                 Category = category,
                 Safety = safety,
-                Reason = rec.Reason
+                Reason = rec.Reason,
+                EventType = FileEventType.Added
             });
         }
 
@@ -131,6 +164,41 @@ public sealed class VolumeMonitor : IDisposable
         _db.InsertEvents(events);
         foreach (var e in events)
             _onEvent(e);
+    }
+
+    private long GetCachedSize(string path)
+    {
+        lock (_sizeCacheLock)
+        {
+            return _lastKnownSizes.TryGetValue(path, out var size) ? size : 0;
+        }
+    }
+
+    private void SetCachedSize(string path, long size)
+    {
+        lock (_sizeCacheLock)
+        {
+            _lastKnownSizes[path] = size;
+            TrimSizeCacheIfNeeded();
+        }
+    }
+
+    private void RemoveCachedSize(string path)
+    {
+        lock (_sizeCacheLock)
+        {
+            _lastKnownSizes.Remove(path);
+        }
+    }
+
+    private void TrimSizeCacheIfNeeded()
+    {
+        if (_lastKnownSizes.Count <= MaxSizeCacheEntries) return;
+
+        // Buang setengah entri tertua dengan cara sederhana (preservasi order insertion).
+        var toRemove = _lastKnownSizes.Keys.Take(_lastKnownSizes.Count / 2).ToList();
+        foreach (var key in toRemove)
+            _lastKnownSizes.Remove(key);
     }
 
     private static long TryGetFileSize(string path)

@@ -1,6 +1,6 @@
+using System.Diagnostics;
 using System.Drawing;
 using System.IO;
-using System.Reflection;
 using WinForms = System.Windows.Forms;
 
 namespace StorageChecker.App.Services;
@@ -59,7 +59,7 @@ public sealed class TrayIconService : IDisposable
         // Fallback: ikon dari exe sendiri, lalu ikon sistem.
         try
         {
-            var exe = Assembly.GetEntryAssembly()?.Location;
+            var exe = Process.GetCurrentProcess().MainModule?.FileName;
             if (!string.IsNullOrEmpty(exe))
             {
                 var extracted = Icon.ExtractAssociatedIcon(exe);

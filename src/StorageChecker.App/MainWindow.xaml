@@ -1,7 +1,8 @@
 <Window x:Class="StorageChecker.App.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Storage Checker Realtime" Height="650" Width="1100"
+        xmlns:scottplot="clr-namespace:ScottPlot.WPF;assembly=ScottPlot.WPF"
+        Title="Storage Checker Realtime" Height="720" Width="1200"
         WindowStartupLocation="CenterScreen">
     <Window.Resources>
         <Style TargetType="TextBlock" x:Key="Header">
@@ -10,7 +11,7 @@
         </Style>
     </Window.Resources>
 
-    <TabControl Margin="6">
+    <TabControl Margin="6" x:Name="MainTabs" SelectionChanged="MainTabs_SelectionChanged">
     <TabItem Header="Realtime">
     <Grid Margin="10">
         <Grid.RowDefinitions>
@@ -19,12 +20,28 @@
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
-        <!-- Ringkasan -->
-        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
-            <TextBlock Text="Status: " Style="{StaticResource Header}"/>
-            <TextBlock Text="{Binding StatusText}" Margin="0,0,24,0"/>
-            <TextBlock Text="Total pertambahan sesi: " Style="{StaticResource Header}"/>
-            <TextBlock Text="{Binding TotalDeltaText}" Foreground="DarkRed" FontWeight="Bold"/>
+        <!-- Ringkasan sesi -->
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,10">
+            <Border Style="{StaticResource Card}" Background="#E8F5E9" BorderBrush="#4CAF50">
+                <StackPanel>
+                    <TextBlock Text="Total Tambah" FontSize="11" Foreground="#2E7D32"/>
+                    <TextBlock Text="{Binding TotalAddedText}" FontSize="18" FontWeight="Bold" Foreground="#2E7D32"/>
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource Card}" Background="#E3F2FD" BorderBrush="#2196F3">
+                <StackPanel>
+                    <TextBlock Text="Total Hapus" FontSize="11" Foreground="#1565C0"/>
+                    <TextBlock Text="{Binding TotalDeletedText}" FontSize="18" FontWeight="Bold" Foreground="#1565C0"/>
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource Card}" Background="#FFF3E0" BorderBrush="#FF9800" Margin="0,0,24,0">
+                <StackPanel>
+                    <TextBlock Text="Net Change" FontSize="11" Foreground="#EF6C00"/>
+                    <TextBlock Text="{Binding NetDeltaText}" FontSize="18" FontWeight="Bold" Foreground="#EF6C00"/>
+                </StackPanel>
+            </Border>
+            <TextBlock Text="Status: " Style="{StaticResource Header}" VerticalAlignment="Center"/>
+            <TextBlock Text="{Binding StatusText}" VerticalAlignment="Center" Margin="0,0,24,0"/>
         </StackPanel>
 
         <!-- Toolbar -->
@@ -38,11 +55,15 @@
             <CheckBox Content="Jalankan saat Windows menyala"
                       IsChecked="{Binding AutoStartEnabled}"
                       VerticalAlignment="Center" Margin="24,0,0,0"/>
+            <TextBlock Text="Urutkan:" VerticalAlignment="Center" Margin="24,0,6,0"/>
+            <ComboBox ItemsSource="{Binding SortOptions}"
+                      SelectedItem="{Binding SelectedSort}"
+                      VerticalAlignment="Center" Width="120"/>
         </StackPanel>
 
         <!-- DataGrid event realtime -->
         <DataGrid Grid.Row="2"
-                  ItemsSource="{Binding Events}"
+                  ItemsSource="{Binding EventsView}"
                   SelectedItem="{Binding Selected}"
                   AutoGenerateColumns="False"
                   IsReadOnly="True"
@@ -55,7 +76,14 @@
                 <DataGridTextColumn Header="Waktu" Binding="{Binding Time, StringFormat=HH:mm:ss}" Width="80"/>
                 <DataGridTextColumn Header="Drive" Binding="{Binding Drive}" Width="50"/>
                 <DataGridTextColumn Header="Nama File" Binding="{Binding FileName}" Width="200"/>
-                <DataGridTextColumn Header="Δ Tambah" Binding="{Binding DeltaText}" Width="90"/>
+                <DataGridTextColumn Header="Δ Perubahan" Binding="{Binding DeltaTextSigned}" Width="100">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Foreground" Value="{Binding DeltaBrush}"/>
+                            <Setter Property="FontWeight" Value="SemiBold"/>
+                        </Style>
+                    </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
                 <DataGridTextColumn Header="Ukuran" Binding="{Binding SizeText}" Width="90"/>
                 <DataGridTextColumn Header="Kategori" Binding="{Binding CategoryText}" Width="120"/>
                 <DataGridTextColumn Header="Keamanan" Binding="{Binding SafetyText}" Width="90"/>
@@ -115,6 +143,71 @@
                     <DataGridTextColumn Header="Path" Binding="{Binding FullPath}" Width="*"/>
                 </DataGrid.Columns>
             </DataGrid>
+        </Grid>
+    </TabItem>
+
+    <TabItem Header="Dashboard" DataContext="{Binding Dashboard}">
+        <Grid Margin="10">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <!-- Header -->
+            <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,12">
+                <Border Style="{StaticResource Card}" Background="#E8F5E9" BorderBrush="#4CAF50">
+                    <StackPanel>
+                        <TextBlock Text="Total Tambah" FontSize="11" Foreground="#2E7D32"/>
+                        <TextBlock Text="{Binding TotalAddedText}" FontSize="20" FontWeight="Bold" Foreground="#2E7D32"/>
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource Card}" Background="#E3F2FD" BorderBrush="#2196F3">
+                    <StackPanel>
+                        <TextBlock Text="Total Hapus" FontSize="11" Foreground="#1565C0"/>
+                        <TextBlock Text="{Binding TotalDeletedText}" FontSize="20" FontWeight="Bold" Foreground="#1565C0"/>
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource Card}" Background="#FFF3E0" BorderBrush="#FF9800" Margin="0,0,24,0">
+                    <StackPanel>
+                        <TextBlock Text="Net Change" FontSize="11" Foreground="#EF6C00"/>
+                        <TextBlock Text="{Binding NetChangeText}" FontSize="20" FontWeight="Bold" Foreground="#EF6C00"/>
+                    </StackPanel>
+                </Border>
+
+                <TextBlock Text="Rentang:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <ComboBox ItemsSource="{Binding Ranges}"
+                          SelectedItem="{Binding SelectedRange}"
+                          VerticalAlignment="Center" Width="130" Margin="0,0,12,0"/>
+                <Button Content="←" Padding="10,4" Command="{Binding PreviousCommand}" Margin="0,0,4,0"/>
+                <TextBlock Text="{Binding StartDate, StringFormat=dd/MM/yyyy}" VerticalAlignment="Center" Margin="4,0"/>
+                <TextBlock Text="-" VerticalAlignment="Center" Margin="4,0"/>
+                <TextBlock Text="{Binding EndDate, StringFormat=dd/MM/yyyy}" VerticalAlignment="Center" Margin="4,0,8,0"/>
+                <Button Content="→" Padding="10,4" Command="{Binding NextCommand}" Margin="0,0,4,0"/>
+                <Button Content="Refresh" Padding="10,4" Command="{Binding LoadCommand}"/>
+            </StackPanel>
+
+            <!-- Charts -->
+            <Grid Grid.Row="2">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <Border Grid.Row="0" Grid.Column="0" Style="{StaticResource Card}" Margin="0,0,10,10">
+                    <scottplot:WpfPlot x:Name="DailyChart"/>
+                </Border>
+                <Border Grid.Row="0" Grid.Column="1" Style="{StaticResource Card}" Margin="0,0,0,10">
+                    <scottplot:WpfPlot x:Name="NetChart"/>
+                </Border>
+                <Border Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Style="{StaticResource Card}">
+                    <scottplot:WpfPlot x:Name="CategoryChart"/>
+                </Border>
+            </Grid>
         </Grid>
     </TabItem>
     </TabControl>
