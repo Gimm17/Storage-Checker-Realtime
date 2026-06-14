@@ -47,7 +47,8 @@ public sealed class EventDatabase : IDisposable
                 category    INTEGER NOT NULL,
                 safety      INTEGER NOT NULL,
                 reason      INTEGER NOT NULL,
-                is_deleted  INTEGER NOT NULL DEFAULT 0
+                is_deleted  INTEGER NOT NULL DEFAULT 0,
+                event_type  INTEGER NOT NULL DEFAULT 0
             );");
         Exec("CREATE INDEX IF NOT EXISTS ix_events_ts ON file_events(ts_utc);");
         Exec("CREATE INDEX IF NOT EXISTS ix_events_cat ON file_events(category);");
@@ -57,6 +58,24 @@ public sealed class EventDatabase : IDisposable
                 journal_id INTEGER NOT NULL,
                 last_usn   INTEGER NOT NULL
             );");
+
+        // Migrasi otomatis untuk DB lama yang belum punya kolom event_type.
+        MigrateAddEventType();
+    }
+
+    private void MigrateAddEventType()
+    {
+        try
+        {
+            using var cmd = _connection.CreateCommand();
+            cmd.CommandText = "SELECT event_type FROM file_events LIMIT 1;";
+            cmd.ExecuteScalar();
+        }
+        catch (SqliteException)
+        {
+            // Kolom belum ada — tambahkan.
+            Exec("ALTER TABLE file_events ADD COLUMN event_type INTEGER NOT NULL DEFAULT 0;");
+        }
     }
 
     private void Exec(string sql)
@@ -78,8 +97,8 @@ public sealed class EventDatabase : IDisposable
         cmd.Transaction = tx;
         cmd.CommandText = @"
             INSERT INTO file_events
-                (ts_utc, drive, full_path, file_name, size_bytes, delta_bytes, category, safety, reason, is_deleted)
-            VALUES ($ts, $drive, $path, $name, $size, $delta, $cat, $safety, $reason, $del);";
+                (ts_utc, drive, full_path, file_name, size_bytes, delta_bytes, category, safety, reason, is_deleted, event_type)
+            VALUES ($ts, $drive, $path, $name, $size, $delta, $cat, $safety, $reason, $del, $et);";
 
         var pTs = cmd.CreateParameter(); pTs.ParameterName = "$ts"; cmd.Parameters.Add(pTs);
         var pDrive = cmd.CreateParameter(); pDrive.ParameterName = "$drive"; cmd.Parameters.Add(pDrive);
@@ -91,6 +110,7 @@ public sealed class EventDatabase : IDisposable
         var pSafety = cmd.CreateParameter(); pSafety.ParameterName = "$safety"; cmd.Parameters.Add(pSafety);
         var pReason = cmd.CreateParameter(); pReason.ParameterName = "$reason"; cmd.Parameters.Add(pReason);
         var pDel = cmd.CreateParameter(); pDel.ParameterName = "$del"; cmd.Parameters.Add(pDel);
+        var pEt = cmd.CreateParameter(); pEt.ParameterName = "$et"; cmd.Parameters.Add(pEt);
 
         foreach (var e in events)
         {
@@ -104,6 +124,7 @@ public sealed class EventDatabase : IDisposable
             pSafety.Value = (int)e.Safety;
             pReason.Value = e.Reason;
             pDel.Value = e.IsDeleted ? 1 : 0;
+            pEt.Value = (int)e.EventType;
             cmd.ExecuteNonQuery();
         }
         tx.Commit();
@@ -154,6 +175,113 @@ public sealed class EventDatabase : IDisposable
         return (long)cmd.ExecuteScalar()!;
     }
 
+    // ── Statistik agregat untuk Dashboard ───────────────────────────────
+
+    /// <summary>
+    /// Total added, deleted, dan net untuk rentang tanggal lokal [start, end].
+    /// </summary>
+    public UsageStats GetStats(DateOnly startLocal, DateOnly endLocal)
+    {
+        var startUtc = startLocal.ToDateTime(TimeOnly.MinValue, DateTimeKind.Local).ToUniversalTime();
+        var endUtc = endLocal.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Local).ToUniversalTime();
+
+        using var cmd = _connection.CreateCommand();
+        cmd.CommandText = @"
+            SELECT COALESCE(SUM(CASE WHEN event_type = 0 THEN delta_bytes ELSE 0 END), 0) AS added,
+                   COALESCE(SUM(CASE WHEN event_type = 1 THEN -delta_bytes ELSE 0 END), 0) AS deleted,
+                   COUNT(*) AS cnt
+            FROM file_events
+            WHERE ts_utc >= $start AND ts_utc < $end;";
+        cmd.Parameters.AddWithValue("$start", startUtc.ToString("O"));
+        cmd.Parameters.AddWithValue("$end", endUtc.ToString("O"));
+
+        using var r = cmd.ExecuteReader();
+        r.Read();
+        var added = r.GetInt64(0);
+        var deleted = r.GetInt64(1);
+        return new UsageStats
+        {
+            StartDate = startLocal,
+            EndDate = endLocal,
+            TotalAddedBytes = added,
+            TotalDeletedBytes = deleted,
+            NetChangeBytes = added - deleted,
+            EventCount = r.GetInt64(2)
+        };
+    }
+
+    /// <summary>
+    /// Statistik per hari untuk chart bar/line.
+    /// </summary>
+    public IReadOnlyList<DailyStat> GetDailyStats(DateOnly startLocal, DateOnly endLocal)
+    {
+        var startUtc = startLocal.ToDateTime(TimeOnly.MinValue, DateTimeKind.Local).ToUniversalTime();
+        var endUtc = endLocal.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Local).ToUniversalTime();
+
+        using var cmd = _connection.CreateCommand();
+        cmd.CommandText = @"
+            SELECT date(ts_utc) AS day,
+                   COALESCE(SUM(CASE WHEN event_type = 0 THEN delta_bytes ELSE 0 END), 0) AS added,
+                   COALESCE(SUM(CASE WHEN event_type = 1 THEN -delta_bytes ELSE 0 END), 0) AS deleted
+            FROM file_events
+            WHERE ts_utc >= $start AND ts_utc < $end
+            GROUP BY day
+            ORDER BY day;";
+        cmd.Parameters.AddWithValue("$start", startUtc.ToString("O"));
+        cmd.Parameters.AddWithValue("$end", endUtc.ToString("O"));
+
+        var result = new List<DailyStat>();
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            if (DateTime.TryParse(r.GetString(0), out var dayUtc))
+            {
+                result.Add(new DailyStat
+                {
+                    Date = DateOnly.FromDateTime(dayUtc.ToLocalTime()),
+                    AddedBytes = r.GetInt64(1),
+                    DeletedBytes = r.GetInt64(2),
+                    NetBytes = r.GetInt64(1) - r.GetInt64(2)
+                });
+            }
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Breakdown per kategori untuk pie/donut chart.
+    /// </summary>
+    public IReadOnlyList<CategoryStat> GetCategoryStats(DateOnly startLocal, DateOnly endLocal)
+    {
+        var startUtc = startLocal.ToDateTime(TimeOnly.MinValue, DateTimeKind.Local).ToUniversalTime();
+        var endUtc = endLocal.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Local).ToUniversalTime();
+
+        using var cmd = _connection.CreateCommand();
+        cmd.CommandText = @"
+            SELECT category,
+                   COALESCE(SUM(CASE WHEN event_type = 0 THEN delta_bytes ELSE 0 END), 0) AS added,
+                   COALESCE(SUM(CASE WHEN event_type = 1 THEN -delta_bytes ELSE 0 END), 0) AS deleted
+            FROM file_events
+            WHERE ts_utc >= $start AND ts_utc < $end
+            GROUP BY category
+            ORDER BY (added + deleted) DESC;";
+        cmd.Parameters.AddWithValue("$start", startUtc.ToString("O"));
+        cmd.Parameters.AddWithValue("$end", endUtc.ToString("O"));
+
+        var result = new List<CategoryStat>();
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            result.Add(new CategoryStat
+            {
+                Category = (FileCategory)r.GetInt32(0),
+                AddedBytes = r.GetInt64(1),
+                DeletedBytes = r.GetInt64(2)
+            });
+        }
+        return result;
+    }
+
     // ── Riwayat: ringkasan per kategori untuk satu tanggal (waktu lokal) ──
     public IReadOnlyList<DailySummary> GetDailySummary(DateOnly localDate)
     {
@@ -198,7 +326,7 @@ public sealed class EventDatabase : IDisposable
         using var cmd = _connection.CreateCommand();
         cmd.CommandText = @"
             SELECT ts_utc, drive, full_path, file_name, size_bytes, delta_bytes,
-                   category, safety, reason, is_deleted
+                   category, safety, reason, is_deleted, event_type
             FROM file_events
             WHERE ts_utc >= $start AND ts_utc < $end
             ORDER BY delta_bytes DESC
@@ -222,7 +350,8 @@ public sealed class EventDatabase : IDisposable
                 Category = (FileCategory)r.GetInt32(6),
                 Safety = (SafetyLevel)r.GetInt32(7),
                 Reason = (uint)r.GetInt64(8),
-                IsDeleted = r.GetInt32(9) != 0
+                IsDeleted = r.GetInt32(9) != 0,
+                EventType = (FileEventType)r.GetInt32(10)
             });
         }
         return result;

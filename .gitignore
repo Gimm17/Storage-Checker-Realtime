@@ -9,4 +9,5 @@ publish/
 screenshots-bug/
 logo.png
 claude --resume *.txt
+.worktrees/
 
