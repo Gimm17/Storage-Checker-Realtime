@@ -66,6 +66,18 @@ Storage penuh tanpa sebab yang jelas adalah masalah klasik. Cache browser memben
 
 > ⚠️ File `.exe` bersifat *self-contained* — tidak perlu menginstal .NET di komputer.
 
+### Jika app berjalan tapi tidak terlihat di tray
+
+Beberapa kondisi (mis. tray gagal terbuat saat auto-start) bisa membuat aplikasi berjalan sebagai "proses hantu" — jalan di latar belakang tapi tidak bisa dibuka. Solusinya:
+
+1. Buka **Task Manager** (`Ctrl + Shift + Esc`).
+2. Pilih tab **Details**.
+3. Cari `StorageChecker.App.exe`.
+4. Klik kanan → **End task**.
+5. Jalankan ulang `StorageChecker.App.exe`.
+
+Setelah perbaikan versi terbaru, klik ganda pada `.exe` saat aplikasi sudah berjalan akan memunculkan dashboard yang ada — tanpa perlu membuka Task Manager.
+
 ### Build dari source
 
 ```bash
