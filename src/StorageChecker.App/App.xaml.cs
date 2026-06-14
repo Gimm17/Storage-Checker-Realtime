@@ -1,5 +1,7 @@
 using System.Threading;
 using System.Windows;
+using Application = System.Windows.Application;
+using MessageBox = System.Windows.MessageBox;
 using StorageChecker.App.Services;
 using StorageChecker.App.ViewModels;
 using StorageChecker.Core;
@@ -15,7 +17,9 @@ namespace StorageChecker.App;
 public partial class App : Application
 {
     private const string MutexName = "StorageCheckerRealtime_SingleInstance";
+    private const string ShowEventName = "StorageCheckerRealtime_ShowDashboard";
     private Mutex? _mutex;
+    private EventWaitHandle? _showEvent;
 
     private EventDatabase? _db;
     private MonitorService? _monitor;
@@ -32,11 +36,21 @@ public partial class App : Application
         _mutex = new Mutex(true, MutexName, out var isNew);
         if (!isNew)
         {
-            MessageBox.Show("Storage Checker sudah berjalan (cek system tray).",
-                "Storage Checker", MessageBoxButton.OK, MessageBoxImage.Information);
+            // Instance kedua: beri sinyal ke instance pertama untuk memunculkan
+            // dashboard, lalu keluar. Inilah yang memperbaiki "tidak bisa dibuka kembali".
+            try
+            {
+                var signal = EventWaitHandle.OpenExisting(ShowEventName);
+                signal.Set();
+            }
+            catch { }
             Shutdown();
             return;
         }
+
+        // Event lintas-proses untuk permintaan "tampilkan dashboard".
+        _showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ShowEventName);
+        ListenForShowRequests();
 
         // Jangan tutup app saat window terakhir ditutup — hidup di tray.
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
@@ -85,11 +99,33 @@ public partial class App : Application
         _window.Activate();
     }
 
+    private void ListenForShowRequests()
+    {
+        // Thread latar: tunggu sinyal dari instance kedua → munculkan dashboard
+        // di UI thread.
+        var thread = new Thread(() =>
+        {
+            while (_showEvent is not null)
+            {
+                try
+                {
+                    _showEvent.WaitOne();
+                    Dispatcher.BeginInvoke(ShowDashboard);
+                }
+                catch { break; }
+            }
+        })
+        { IsBackground = true, Name = "ShowRequestListener" };
+        thread.Start();
+    }
+
     private void ExitApp()
     {
         _monitor?.Dispose();
         _db?.Dispose();
         _tray?.Dispose();
+        _showEvent?.Dispose();
+        _showEvent = null;
         _mutex?.ReleaseMutex();
         _mutex?.Dispose();
         Shutdown();

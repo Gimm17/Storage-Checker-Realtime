@@ -6,3 +6,7 @@ publish/
 *.db
 *.db-shm
 *.db-wal
+screenshots-bug/
+logo.png
+claude --resume *.txt
+
